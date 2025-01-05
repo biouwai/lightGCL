@@ -2,28 +2,30 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.utils.data as data
+from sklearn.metrics import roc_auc_score, precision_recall_curve, auc
 
-def metrics(uids, predictions, topk, test_labels):
-    user_num = 0
-    all_recall = 0
-    all_ndcg = 0
-    for i in range(len(uids)):
-        uid = uids[i]
-        prediction = list(predictions[i][:topk])
-        label = test_labels[uid]
-        if len(label)>0:
-            hit = 0
-            idcg = np.sum([np.reciprocal(np.log2(loc + 2)) for loc in range(min(topk, len(label)))])
-            dcg = 0
-            for item in label:
-                if item in prediction:
-                    hit+=1
-                    loc = prediction.index(item)
-                    dcg = dcg + np.reciprocal(np.log2(loc+2))
-            all_recall = all_recall + hit/len(label)
-            all_ndcg = all_ndcg + dcg/idcg
-            user_num+=1
-    return all_recall/user_num, all_ndcg/user_num
+def metrics(uids, predictions, test_labels):
+    # 步骤 1: 将 numpy.int32 转换为 int
+    test_labels = [[int(item) for item in sublist] for sublist in test_labels]
+    num_items = predictions.shape[1]
+    flat_predictions = predictions.flatten()
+    flat_labels = np.zeros(len(flat_predictions))
+
+    # 明确将 test_labels 中的元素与 uids 对应
+    for user_id, labels in enumerate(test_labels):
+        for item_id in labels:
+            # 计算在 flat_labels 中的正确索引
+            index = user_id * num_items + item_id
+            if index < len(flat_labels):
+                flat_labels[index] = 1
+    flat_predictions = flat_predictions.detach().numpy()
+    # 计算 AUC
+    auc_score = roc_auc_score(flat_labels, flat_predictions)
+    # 计算AUPR
+    precision, recall, _ = precision_recall_curve(flat_labels, flat_predictions)
+    aupr_score = auc(recall, precision)
+    return auc_score,aupr_score
+
 
 def scipy_sparse_mat_to_torch_sparse_tensor(sparse_mx):
     sparse_mx = sparse_mx.tocoo().astype(np.float32)
