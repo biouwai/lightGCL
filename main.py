@@ -1,25 +1,18 @@
 import numpy as np
 import torch
-import pickle
+import scipy.sparse as sp
 from model import LightGCL
 from utils import metrics, scipy_sparse_mat_to_torch_sparse_tensor
-import pandas as pd
 from parser import args
-from tqdm import tqdm
-import time
 import torch.utils.data as data
 from utils import TrnData
 import warnings
+
 warnings.filterwarnings("ignore")
 
 device = 'cpu'
 
-# 二、加载数据及预处理；
-# load data
-import numpy as np
-import scipy.sparse as sp
-
-# 尝试修改一些超参数
+# 超参数
 d = 64  # 嵌入维度
 l = 3  # GNN 层数
 temp = 5  # 温度参数
@@ -29,9 +22,11 @@ max_samp = 50  # 最大采样数
 lambda_1 = 0.001  # 正则化参数
 lambda_2 = 1e-4  # 正则化参数
 dropout = 0.1  # Dropout 概率
-lr = 0.0001  # 学习率
+lr = 0.001  # 学习率
 decay = 1e-5  # 权重衰减系数
-svd_q = 10  # SVD 分解的秩
+svd_q = 5  # SVD 分解的秩
+
+# 数据加载
 def read_file_to_sparse_matrix(file_path):
     rows = []
     cols = []
@@ -52,7 +47,6 @@ def read_file_to_sparse_matrix(file_path):
     csr_matrix = coo_matrix.tocsr()
     return coo_matrix, csr_matrix
 
-# 假设文件名为 data.txt
 train_path = 'dataset/rtrain_0.txt'
 train, train_csr = read_file_to_sparse_matrix(train_path)
 test_path = 'dataset/rtest_0.txt'
@@ -104,10 +98,7 @@ recall_20_x = []
 auc_y = []
 
 model = LightGCL(adj_norm.shape[0], adj_norm.shape[1], d, u_mul_s, v_mul_s, svd_u.T, svd_v.T, train_csr, adj_norm, l, temp, lambda_1, lambda_2, dropout, batch_user, device)
-#model.load_state_dict(torch.load('saved_model.pt'))
 optimizer = torch.optim.Adam(model.parameters(),weight_decay=0,lr=lr)
-#optimizer.load_state_dict(torch.load('saved_optim.pt'))
-
 current_lr = lr
 
 for epoch in range(epoch_no):
@@ -131,7 +122,6 @@ for epoch in range(epoch_no):
         loss, loss_r, loss_s= model(uids, iids, pos, neg)
         loss.backward()
         optimizer.step()
-        #print('batch',batch)
         epoch_loss += loss.cpu().item()
         epoch_loss_r += loss_r.cpu().item()
         epoch_loss_s += loss_s.cpu().item()
@@ -144,7 +134,7 @@ for epoch in range(epoch_no):
     loss_r_list.append(epoch_loss_r)
     loss_s_list.append(epoch_loss_s)
 
-    if epoch % 10 == 0:  # test every 10 epochs
+    if epoch % 5 == 0:  # test every 5 epochs
         test_uids = np.array([i for i in range(adj_norm.shape[0])])
         batch_no = int(np.ceil(len(test_uids)/batch_user))
         test_uids_input = torch.LongTensor(test_uids)

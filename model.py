@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from utils import sparse_dropout, spmm
+from utils import sparse_dropout
 import torch.nn.functional as F
 
 

@@ -4,15 +4,6 @@ import torch.nn as nn
 import torch.utils.data as data
 from sklearn.metrics import roc_auc_score, precision_recall_curve, auc
 
-import numpy as np
-from sklearn.metrics import roc_auc_score, precision_recall_curve, auc
-
-import numpy as np
-from imblearn.over_sampling import SMOTE
-from sklearn.metrics import roc_auc_score, precision_recall_curve, auc
-import torch
-
-
 def metrics(uids, predictions, test_labels):
     # 步骤 1: 将 numpy.int32 转换为 int
     test_labels = [[int(item) for item in sublist] for sublist in test_labels]
@@ -31,7 +22,6 @@ def metrics(uids, predictions, test_labels):
 
     # 计算正样本的数量
     num_positive = int(np.sum(flat_labels))
-    num_negative = len(flat_labels) - num_positive
 
     # 找出正样本的索引
     positive_indices = np.where(flat_labels == 1)[0]
@@ -57,43 +47,6 @@ def metrics(uids, predictions, test_labels):
     aupr_score = auc(recall, precision)
 
     return auc_score, aupr_score
-
-# def metrics(uids, predictions, test_labels):
-#     # 将 test_labels 转换为 flat list of tuples (user_id, item_id)
-#     positive_pairs = [(user_id, item_id) for user_id, items in enumerate(test_labels) for item_id in items]
-
-#     # 获取所有用户的数量和物品的数量
-#     num_users = len(test_labels)
-#     num_items = predictions.shape[1]
-
-#     # 初始化两个列表来保存用于计算AUC和AUPR的真实标签和平坦化的预测值
-#     true_labels = []
-#     pred_scores = []
-
-#     # 遍历所有的用户-物品组合
-#     for user_id in range(num_users):
-#         for item_id in range(num_items):
-#             # 如果是正样本，则添加到列表中
-#             if (user_id, item_id) in positive_pairs:
-#                 true_labels.append(1)
-#                 pred_scores.append(predictions[user_id, item_id].item())
-#             else:
-#                 # 只添加部分负样本以避免不平衡
-#                 if np.random.rand() < 0.1:  # 调整这个比例来控制负样本的数量
-#                     true_labels.append(0)
-#                     pred_scores.append(predictions[user_id, item_id].item())
-
-#     # 确保我们至少有一个正样本和一个负样本进行评估
-#     if not all(true_labels) and any(true_labels):
-#         # 计算 AUC 和 AUPR
-#         auc_score = roc_auc_score(true_labels, pred_scores)
-#         precision, recall, _ = precision_recall_curve(true_labels, pred_scores)
-#         aupr_score = auc(recall, precision)
-#     else:
-#         auc_score = aupr_score = float('nan')  # 如果没有足够的样本，返回 NaN
-
-#     return auc_score, aupr_score
-
 
 def scipy_sparse_mat_to_torch_sparse_tensor(sparse_mx):
     sparse_mx = sparse_mx.tocoo().astype(np.float32)
