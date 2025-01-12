@@ -40,6 +40,10 @@ def metrics(uids, predictions, test_labels):
     selected_flat_predictions = flat_predictions[selected_indices]
     selected_flat_labels = flat_labels[selected_indices]
 
+    # 避免出错
+    selected_flat_predictions = np.nan_to_num(selected_flat_predictions, nan=0)
+    selected_flat_labels = np.nan_to_num(selected_flat_labels, nan=0)
+
     # 计算 AUC
     auc_score = roc_auc_score(selected_flat_labels, selected_flat_predictions)
     # 计算 AUPR
