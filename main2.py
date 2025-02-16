@@ -18,16 +18,72 @@ device = 'cpu'
 
 logging.basicConfig(filename='output.log', level=logging.INFO, format='%(asctime)s - %(message)s')
 
-batch_user=128
-d=128
-dropout=0.1
-epoch_no=120
-l=5
-lambda_1=0.0001
+
+
+
+# ----
+
+
+# 0/5
+# batch_user=128
+# d=128
+# dropout=0.0
+# epoch_no=120
+# l=4
+# lambda_1=0.01
+# lambda_2=0.0001
+# lr=0.001
+# svd_q=7
+# temp=3
+
+# 上双9 0/5
+# batch_user=128
+# d=128
+# dropout=0.0
+# epoch_no=120
+# l=4
+# lambda_1=0.01
+# lambda_2=0.0001
+# lr=0.001
+# svd_q=7
+# temp=3
+
+# 双9 0/5
+# batch_user=128
+# d=256
+# dropout=0.1
+# epoch_no=120
+# l=4
+# lambda_1=0.001
+# lambda_2=0.0001
+# lr=0.001
+# svd_q=3
+# temp=3
+
+# 0/5
+# batch_user=128
+# d=128
+# dropout=0.0
+# epoch_no=120
+# l=4
+# lambda_1=0.0001
+# lambda_2=1e-05
+# lr=0.001
+# svd_q=9
+# temp=9
+
+# 实验参数
+# 2/5
+batch_user=256
+d=256
+dropout=0.0
+epoch_no=140
+l=2
+lambda_1=0.0
 lambda_2=0.0001
 lr=0.001
-svd_q=7
-temp=7
+svd_q=3
+temp=9
 
 # 数据加载
 def read_file_to_sparse_matrix(file_path):
@@ -139,12 +195,18 @@ for epoch in range(epoch_no):
     loss_r_list.append(epoch_loss_r)
     loss_s_list.append(epoch_loss_s)
 
-    if epoch % 5 == 0:  # test every 5 epochs
+    if epoch % 1 == 0:  # test every 5 epochs
         test_uids = np.array([i for i in range(adj_norm.shape[0])])
         batch_no = int(np.ceil(len(test_uids)/batch_user))
         test_uids_input = torch.LongTensor(test_uids)
         predictions = model(test_uids_input,None,None,None,test=True)
         auc,aupr = metrics(test_uids,predictions,test_labels)
         # print('------------------------------------')
-        print('Epoch:',epoch,'auc:',auc,'aupr:',aupr)
+        if (auc + aupr) > (max_auc+max_aucr):
+            max_auc = auc
+            max_aucr = aupr
+            max_epoch = epoch
+        print('epoch:',epoch,'AUC:',auc,'AUPR:',aupr)
+print('MAX,epoch:',max_epoch,'AUC:',max_auc,'AUPR:',max_aucr)
+
  
