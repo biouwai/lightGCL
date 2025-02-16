@@ -9,7 +9,9 @@ def metrics(uids, predictions, test_labels):
     test_labels = [[int(item) for item in sublist] for sublist in test_labels]
     num_items = predictions.shape[1]
     # 修改：使用 detach().numpy() 从计算图中分离并转换为 numpy 数组
-    flat_predictions = predictions.flatten().detach().numpy()
+    # flat_predictions = predictions.flatten().detach().numpy()
+    # 将 GPU 张量复制到 CPU 上
+    flat_predictions = predictions.flatten().detach().cpu().numpy()
     flat_labels = np.zeros(len(flat_predictions))
 
     # 明确将 test_labels 中的元素与 uids 对应
@@ -43,6 +45,8 @@ def metrics(uids, predictions, test_labels):
     # 避免出错
     selected_flat_predictions = np.nan_to_num(selected_flat_predictions, nan=0)
     selected_flat_labels = np.nan_to_num(selected_flat_labels, nan=0)
+
+
 
     # 计算 AUC
     auc_score = roc_auc_score(selected_flat_labels, selected_flat_predictions)

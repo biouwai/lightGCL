@@ -79,7 +79,7 @@ class LightGCL(nn.Module):
             # 计算预测得分 
             predictions = self.E_u[uids] @ self.E_i.T
             # 使用 sigmoid 函数将得分转换为概率值，表示用户会产生目标行为的概率
-            predictions = torch.sigmoid(predictions)
+            predictions = torch.sigmoid(predictions).cuda(torch.device(self.device))
             return predictions
         else:  # training phase
             for layer in range(1, self.l + 1):

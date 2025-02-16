@@ -1,3 +1,4 @@
+from datetime import date
 import logging
 import numpy as np
 from sklearn.model_selection import ParameterGrid
@@ -12,7 +13,7 @@ import warnings
 
 warnings.filterwarnings("ignore")
 
-device = 'cpu'
+device = 'cuda:' + args.cuda
 
 logging.basicConfig(filename='output.log', level=logging.INFO, format='%(asctime)s - %(message)s')
 
@@ -63,11 +64,11 @@ def train_model(n, d, l, temp, batch_user, epoch_no, lambda_1, lambda_2, dropout
     train_loader = data.DataLoader(train_data, batch_size=args.inter_batch, shuffle=True, num_workers=0)
 
     adj_norm = scipy_sparse_mat_to_torch_sparse_tensor(train)
-    adj_norm = adj_norm.coalesce()
+    adj_norm = adj_norm.coalesce().cuda(torch.device(device))
     # print('Adj matrix normalized.')
 
     # perform svd reconstruction
-    adj = scipy_sparse_mat_to_torch_sparse_tensor(train).coalesce()
+    adj = scipy_sparse_mat_to_torch_sparse_tensor(train).coalesce().cuda(torch.device(device))
     # print('Performing SVD...')
     svd_u,s,svd_v = torch.svd_lowrank(adj, q=svd_q)
     u_mul_s = svd_u @ (torch.diag(s))
@@ -92,6 +93,7 @@ def train_model(n, d, l, temp, batch_user, epoch_no, lambda_1, lambda_2, dropout
     max_epoch = 0
 
     model = LightGCL(adj_norm.shape[0], adj_norm.shape[1], d, u_mul_s, v_mul_s, svd_u.T, svd_v.T, train_csr, adj_norm, l, temp, lambda_1, lambda_2, dropout, batch_user, device)
+    model.cuda(torch.device(device))
     optimizer = torch.optim.Adam(model.parameters(),weight_decay=0,lr=lr)
     current_lr = lr
 
@@ -106,9 +108,9 @@ def train_model(n, d, l, temp, batch_user, epoch_no, lambda_1, lambda_2, dropout
         train_loader.dataset.neg_sampling()
         for i, batch in enumerate(train_loader):
             uids, pos, neg = batch
-            uids = uids.long()
-            pos = pos.long()
-            neg = neg.long()
+            uids = uids.long().cuda(torch.device(device))
+            pos = pos.long().cuda(torch.device(device))
+            neg = neg.long().cuda(torch.device(device))
             iids = torch.concat([pos, neg], dim=0)
 
             # feed
@@ -119,6 +121,7 @@ def train_model(n, d, l, temp, batch_user, epoch_no, lambda_1, lambda_2, dropout
             epoch_loss += loss.cpu().item()
             epoch_loss_r += loss_r.cpu().item()
             epoch_loss_s += loss_s.cpu().item()
+            torch.cuda.empty_cache()
 
         batch_no = len(train_loader)
         epoch_loss = epoch_loss/batch_no
@@ -131,7 +134,7 @@ def train_model(n, d, l, temp, batch_user, epoch_no, lambda_1, lambda_2, dropout
         if epoch % 5 == 0:  # test every 5 epochs
             test_uids = np.array([i for i in range(adj_norm.shape[0])])
             batch_no = int(np.ceil(len(test_uids)/batch_user))
-            test_uids_input = torch.LongTensor(test_uids)
+            test_uids_input = torch.LongTensor(test_uids).cuda(torch.device(device))
             predictions = model(test_uids_input,None,None,None,test=True)
             auc,aupr = metrics(test_uids,predictions,test_labels)
             if (auc + aupr) > (max_auc+max_aucr):
@@ -151,11 +154,11 @@ param_grid = {
     'l': [2, 3, 4, 5],  # GNN 层数
     'temp': [1, 3, 5, 7, 9],  # 温度参数
     'batch_user': [128, 256, 512],  # 用户批次大小
-    'epoch_no': [120],  # 训练轮数
+    'epoch_no': [700],  # 训练轮数
     'lambda_1': [0.0001, 0.001, 0.01, 0.1],  # 正则化参数
     'lambda_2': [1e-5, 1e-4, 1e-3, 1e-2],  # 正则化参数
     'dropout': [0.0, 0.1, 0.2, 0.3, 0.4],  # Dropout 概率
-    'lr': [0.01,0.001],  # 学习率
+    'lr': [0.0001],  # 学习率
     'svd_q': [3, 5, 7, 9]  # SVD 分解的秩
 }
 
@@ -192,7 +195,12 @@ for params in ParameterGrid(param_grid):
     svd_q = params['svd_q']
 
     n = n + 1
-    print('n',n,'params',params)
+    from datetime import datetime
+
+    # 获取当前时间
+    now = datetime.now()
+
+    print('date',now,'n',n,'params',params)
     epoch_no, auc, aupr = train_model(n, d, l, temp, batch_user, epoch_no, lambda_1, lambda_2, dropout, lr, svd_q)
 
     # 同时考虑 AUC 和 AUPR 来更新最佳参数
@@ -201,7 +209,7 @@ for params in ParameterGrid(param_grid):
         best_aupr = aupr
         best_params = params
         print('epoch:',epoch_no,'AUC:',best_auc,'AUPR:',best_aupr,'params:',best_params)
-        logging.info('epoch: %s AUC: %s AUPR: %s params: %s', epoch_no, best_auc, best_aupr, best_params)
+        logging.info('n: %d epoch: %s AUC: %s AUPR: %s params: %s', n, epoch_no, best_auc, best_aupr, best_params)
 
 print("Best epoch:", epoch_no)
 print("Best AUC:", best_auc)
