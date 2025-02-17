@@ -59,10 +59,6 @@ test, test_csr = read_file_to_sparse_matrix(test_path)
 
 print('Data loaded.')
 
-# print('user_num:',train.shape[0],'item_num:',train.shape[1],'lambda_1:',lambda_1,'lambda_2:',lambda_2,'temp:',temp,'q:',svd_q)
-
-# epoch_user = min(train.shape[0], 30000)
-
 # normalizing the adj matrix
 rowD = np.array(train.sum(1)).squeeze()
 colD = np.array(train.sum(0)).squeeze()
