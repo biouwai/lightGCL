@@ -18,60 +18,6 @@ device = 'cpu'
 
 logging.basicConfig(filename='output.log', level=logging.INFO, format='%(asctime)s - %(message)s')
 
-
-
-
-# ----
-
-
-# 0/5
-# batch_user=128
-# d=128
-# dropout=0.0
-# epoch_no=120
-# l=4
-# lambda_1=0.01
-# lambda_2=0.0001
-# lr=0.001
-# svd_q=7
-# temp=3
-
-# 上双9 0/5
-# batch_user=128
-# d=128
-# dropout=0.0
-# epoch_no=120
-# l=4
-# lambda_1=0.01
-# lambda_2=0.0001
-# lr=0.001
-# svd_q=7
-# temp=3
-
-# 双9 0/5
-# batch_user=128
-# d=256
-# dropout=0.1
-# epoch_no=120
-# l=4
-# lambda_1=0.001
-# lambda_2=0.0001
-# lr=0.001
-# svd_q=3
-# temp=3
-
-# 0/5
-# batch_user=128
-# d=128
-# dropout=0.0
-# epoch_no=120
-# l=4
-# lambda_1=0.0001
-# lambda_2=1e-05
-# lr=0.001
-# svd_q=9
-# temp=9
-
 # 实验参数
 # 2/5
 batch_user=256
