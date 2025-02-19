@@ -41,7 +41,7 @@ for i in range(5):
     lambda_2=1e-5
     lambda_1=1e-7
     lr=0.001
-    svd_q=10
+    # svd_q=10
     temp=0.5
 
     # 数据加载
@@ -90,11 +90,11 @@ for i in range(5):
     # perform svd reconstruction
     adj = scipy_sparse_mat_to_torch_sparse_tensor(train).coalesce()
     # print('Performing SVD...')
-    svd_u,s,svd_v = torch.svd_lowrank(adj, q=svd_q)
-    u_mul_s = svd_u @ (torch.diag(s))
-    v_mul_s = svd_v @ (torch.diag(s))
-    del s
-    print('SVD done.')
+    # svd_u,s,svd_v = torch.svd_lowrank(adj, q=svd_q)
+    # u_mul_s = svd_u @ (torch.diag(s))
+    # v_mul_s = svd_v @ (torch.diag(s))
+    # del s
+    # print('SVD done.')
 
     # process test set
     max_user_id = max(train.shape[0], test.shape[0])
@@ -110,7 +110,7 @@ for i in range(5):
     loss_s_list = []
 
 
-    model = LightGCL(adj_norm.shape[0], adj_norm.shape[1], d, u_mul_s, v_mul_s, svd_u.T, svd_v.T, train_csr, adj_norm, l, temp, lambda_1, lambda_2, dropout, batch_user, device)
+    model = LightGCL(adj_norm.shape[0], adj_norm.shape[1], d,  train_csr, adj_norm, l, temp, lambda_1, lambda_2, dropout, batch_user, device)
 
     optimizer = torch.optim.Adam(model.parameters(),weight_decay=0,lr=lr)
     current_lr = lr
