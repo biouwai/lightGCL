@@ -1,4 +1,5 @@
 import numpy as np
+import scipy.sparse as sp
 import torch
 import torch.nn as nn
 import torch.utils.data as data
@@ -32,7 +33,7 @@ def metrics(uids, predictions, test_labels):
 
     # 随机选取和正样本数量相同的负样本索引
     np.random.shuffle(negative_indices)
-    selected_negative_indices = negative_indices[:num_positive]
+    selected_negative_indices = negative_indices[:(num_positive)]
 
     # 合并正样本和选取的负样本索引
     selected_indices = np.concatenate((positive_indices, selected_negative_indices))
@@ -45,8 +46,6 @@ def metrics(uids, predictions, test_labels):
     # 避免出错
     selected_flat_predictions = np.nan_to_num(selected_flat_predictions, nan=0)
     selected_flat_labels = np.nan_to_num(selected_flat_labels, nan=0)
-
-
 
     # 计算 AUC
     auc_score = roc_auc_score(selected_flat_labels, selected_flat_predictions)
@@ -102,3 +101,90 @@ class TrnData(data.Dataset):
 
     def __getitem__(self, idx):
         return self.rows[idx], self.cols[idx], self.negs[idx]
+    
+# class TrnData(data.Dataset):
+#     def __init__(self, coomat, drug_sim=None):
+#         self.rows = coomat.row
+#         self.cols = coomat.col
+#         self.dokmat = coomat.todok()
+#         self.drug_sim = drug_sim  # 添加药物相似度矩阵
+#         self.negs = np.zeros((len(self.rows), 5), dtype=np.int32)  # 每个正样本5个负样本
+
+#     def neg_sampling(self):
+#         for i in range(len(self.rows)):
+#             u = self.rows[i]
+#             pos_i = self.cols[i]
+#             valid_negs = []
+            
+#             # 困难负采样（基于相似度的前2个）
+#             if self.drug_sim is not None:
+#                 sim_scores = self.drug_sim[pos_i]
+#                 sorted_items = np.argsort(-sim_scores)  # 降序排序
+#                 for item in sorted_items:
+#                     if item != pos_i and (u, item) not in self.dokmat:
+#                         valid_negs.append(item)
+#                         if len(valid_negs) >= 2:
+#                             break
+            
+#             # 随机补充剩余3个
+#             while len(valid_negs) < 5:
+#                 i_neg = np.random.randint(self.dokmat.shape[1])
+#                 if (u, i_neg) not in self.dokmat and i_neg not in valid_negs:
+#                     valid_negs.append(i_neg)
+            
+#             self.negs[i] = valid_negs[:5]
+
+#     def __len__(self):
+#         return len(self.rows)
+#     def __getitem__(self, idx):
+#         return self.rows[idx], self.cols[idx], self.negs[idx]  # 返回5个负样本
+    
+# 数据加载
+def read_file_to_sparse_matrix(file_path):
+    rows = []
+    cols = []
+    data = []
+    with open(file_path, 'r') as file:
+        for line in file:
+            parts = line.strip().split()
+            if len(parts) == 3:
+                row, col, value = map(int, parts)
+                rows.append(row)
+                cols.append(col)
+                data.append(value)
+    n_rows = max(rows) + 1
+    n_cols = max(cols) + 1
+    # 创建 COO 稀疏矩阵
+    coo_matrix = sp.coo_matrix((data, (rows, cols)), shape=(n_rows, n_cols), dtype=np.float32)
+    # 转换为 CSR 稀疏矩阵
+    csr_matrix = coo_matrix.tocsr()
+    return coo_matrix, csr_matrix
+    
+def matrix_decomposition(adj, method='full_svd', q=None):
+    if method == 'full_svd':
+        U, S, Vh = torch.linalg.svd(adj)
+        return U[:, :q], S[:q], Vh[:q, :].T  # Return V instead of V^T
+    elif method == 'lowrank':
+        U, S, V = torch.svd_lowrank(adj, q=q)
+        return U, S, V  # No need to transpose
+    elif method == 'pca':
+        # PCA decomposition
+        U, S, V = torch.pca_lowrank(adj.to_dense(), q=q)
+        return U, S, V  # Transpose V to match expected shape (n x q)
+    elif method == 'qr':
+        Q, R = torch.linalg.qr(adj.to_dense())
+        # Extract the first q columns of Q and R
+        U_qr = Q[:, :q]  # Shape: (m, q)
+        S_qr = torch.diag(R[:q, :q])  # Singular values (diagonal of R)
+        V_qr = R[:q, :].T  # Transpose R to match expected shape (n, q)
+        return U_qr, S_qr, V_qr
+    elif method == 'nmf':
+        from sklearn.decomposition import NMF
+        # Convert sparse tensor to dense tensor first
+        adj_dense = adj.to_dense().numpy()
+        model = NMF(n_components=q)
+        W = model.fit_transform(adj_dense)  # Fit NMF on dense matrix
+        H = model.components_
+        return torch.Tensor(W), None, torch.Tensor(H.T)  # Return H^T as V
+    else:
+        raise ValueError(f"Unsupported decomposition method: {method}")

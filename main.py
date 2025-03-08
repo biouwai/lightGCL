@@ -16,7 +16,11 @@ warnings.filterwarnings("ignore")
 device = 'cuda:' + args.cuda
 
 logging.basicConfig(filename='output.log', level=logging.INFO, format='%(asctime)s - %(message)s')
-
+# ds = [32, 64, 128, 256, 512]
+# layers = [1, 2, 3, 4, 5]
+# svd_q_values = [1, 3, 5, 10, 15, 20]
+# dropout_values = [0.0, 0.1, 0.2, 0.25, 0.3, 0.5]
+# temp_values = [0.3, 0.5, 1, 3, 10]
 def train_model(n, d, l, temp, batch_user, epoch_no, lambda_1, lambda_2, dropout, lr, svd_q):
     # 第n个参数组合
     print('组合',n,'开始训练---')
@@ -215,3 +219,31 @@ print("Best epoch:", epoch_no)
 print("Best AUC:", best_auc)
 print("Best AUPR:", best_aupr)
 print("Best parameters:", best_params)
+
+
+#     results.append({
+#         'temp': temp,
+#         'max_epoch':max_epoch,
+#         'max_auc': max_auc,
+#         'max_aucr': max_aucr
+#     })
+
+# # 输出结果
+# for result in results:
+#     print(result)
+
+# # 提取数据
+# auc_scores = [result['max_auc'] for result in results]
+# aupr_scores = [result['max_aucr'] for result in results]
+# # 提取数据
+# temp_values = [result['temp'] for result in results]
+
+# # 绘制图表
+# plt.plot(temp_values, auc_scores, marker='o', label='AUC')
+# plt.plot(temp_values, aupr_scores, marker='x', label='AUPR')
+# plt.xscale('log')  # 使用对数坐标轴
+# plt.xlabel('Temperature (τ)')
+# plt.ylabel('Performance')
+# plt.title('Effect of Temperature on Model Performance')
+# plt.legend()
+# plt.show()

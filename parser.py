@@ -2,13 +2,13 @@ import argparse
 
 def parse_args():
     parser = argparse.ArgumentParser(description='Model Params')
-    parser.add_argument('--lr', default=1e-3, type=float, help='learning rate')
+    parser.add_argument('--lr', default=0.01, type=float, help='learning rate')
     parser.add_argument('--decay', default=0.99, type=float, help='learning rate')
     parser.add_argument('--batch', default=256, type=int, help='batch size')
     parser.add_argument('--inter_batch', default=4096, type=int, help='batch size')
     parser.add_argument('--note', default=None, type=str, help='note')
     parser.add_argument('--lambda1', default=0.2, type=float, help='weight of cl loss')
-    parser.add_argument('--epoch', default=100, type=int, help='number of epochs')
+    parser.add_argument('--epoch', default=40, type=int, help='number of epochs')
     parser.add_argument('--d', default=64, type=int, help='embedding size')
     parser.add_argument('--q', default=5, type=int, help='rank')
     parser.add_argument('--gnn_layer', default=2, type=int, help='number of gnn layers')
