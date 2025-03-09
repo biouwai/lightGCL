@@ -17,6 +17,8 @@ import numpy as np
 import scipy.sparse as sp
 import pubchempy as pcp
 from sklearn.model_selection import train_test_split
+from scipy.sparse import coo_matrix
+
 
 warnings.filterwarnings("ignore")
 
@@ -34,58 +36,56 @@ for i in range(1):
     epoch_no=120
     l=2
     lambda_2=0.00001
-    lambda_1=0.01
+    lambda_1=1
     lr=0.001
-    svd_q=216
+    svd_q=121
     temp=0.5
     # 指标
     max_auc = 0
     max_aucr = 0
     max_epoch = 0
 
-    df1 = pd.read_csv("newSet/drugSimMat.csv",header=None)
-    df2 = pd.read_csv("newSet/LncDrug_edge.csv")
-    df3 = pd.read_csv("newSet/MiDrug_edge.csv")
-    df = pd.concat([df3, df2], ignore_index=True)
 
-    ncRNA_list = sorted(df['ncRNA_Name'].unique())
-    drug_list = sorted(df['Drug_Name'].unique())
+    def load_sparse(filename):
+        """
+        从文件加载稀疏矩阵。
+        
+        参数:
+            filename (str): 文件路径。
+        
+        返回:
+            scipy.sparse.coo_matrix: 还原的稀疏矩阵。
+        """
+        rows = []
+        cols = []
+        data = []
+        n_rows = 0
+        n_cols = 0
+        
+        with open(filename, 'r') as f:
+            for line in f:
+                if line.startswith("# Shape:"):
+                    # 解析矩阵形状
+                    parts = line.strip().split()
+                    n_rows = int(parts[2])
+                    n_cols = int(parts[3])
+                else:
+                    # 解析非零元素
+                    parts = line.strip().split()
+                    if len(parts) == 3:
+                        row, col, value = map(int, parts)
+                        rows.append(row)
+                        cols.append(col)
+                        data.append(value)
+        
+        # 创建稀疏矩阵
+        sparse_matrix = coo_matrix((data, (rows, cols)), shape=(n_rows, n_cols), dtype=np.float32)
+        return sparse_matrix
 
-    ncRNA_id_map = {name:i for i,name in enumerate(ncRNA_list)}
-    drug_id_map = {name:i for i,name in enumerate(drug_list)}
-    # 生成交互三元组
-    rows = df['ncRNA_Name'].map(ncRNA_id_map).values
-    cols = df['Drug_Name'].map(drug_id_map).values
-    data1 = np.ones(len(df))  # 所有关联标记为1
-    train_idx, test_idx = train_test_split(np.arange(len(df)), test_size=0.2, random_state=42)
-
-    # 创建稀疏矩阵函数
-    def create_sparse_matrix(indices, rows, cols, data1):
-        return sp.coo_matrix(
-            (data1[indices], (rows[indices], cols[indices])),
-            shape=(len(ncRNA_list), len(drug_list)),
-            dtype=np.float32
-        )
-
-    # 生成训练/测试矩阵
-    train = create_sparse_matrix(train_idx, rows, cols, data1)
-    test = create_sparse_matrix(test_idx, rows, cols, data1)
-
-    train1 = train.copy()
-    print('train:',train.sum())
-
-    # 转换为CSR格式
+    # 示例：加载 train 和 test
+    train = load_sparse('dataset/rrtrain_x.txt')
     train_csr = train.tocsr()
-    test_csr = test.tocsr()
-
-    # 保存为txt文件
-    def save_sparse(matrix, filename):
-        with open(filename, 'w') as f:
-            for row, col in zip(matrix.row, matrix.col):
-                f.write(f"{row} {col} 1\n")
-
-    save_sparse(train, 'dataset/rrtrain_x.txt')
-    save_sparse(test, 'dataset/rrtest_x.txt')
+    test = load_sparse('dataset/rrtest_x.txt')
 
     train1 = train.copy()
     test1 = test.copy()
@@ -111,13 +111,8 @@ for i in range(1):
     # 4. 转换为密集张量
     adj_dense = adj.to_dense()
     adj_dense1 = test1.to_dense()
-    # svd_u,s,svd_v = torch.svd_lowrank(adj, q=svd_q)
-    df1 = pd.read_csv("newSet/drugSimMat.csv", header=None)
-    drug_sim_mat = torch.tensor(df1.values, dtype=torch.float32)
 
-    adj_dense_drug_sim = torch.matmul(adj_dense, drug_sim_mat)
-    method='full_svd'
-    svd_u,s,svd_v = matrix_decomposition(adj_dense_drug_sim, method='full_svd', q=svd_q)
+    svd_u,s,svd_v = matrix_decomposition(adj_dense1, method='full_svd', q=svd_q)
     u_mul_s = svd_u @ (torch.diag(s))
     v_mul_s = svd_v @ (torch.diag(s))
     del s
