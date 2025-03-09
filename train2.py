@@ -166,29 +166,26 @@ reverse_edge_index_test = edge_index_test.flip(0)
 edge_index_combined_train = torch.cat([edge_index_train, reverse_edge_index_train], dim=1)
 edge_index_combined_test = torch.cat([edge_index_test, reverse_edge_index_test], dim=1)
 
-# ...（前面的代码保持不变）
+#构建训练集中的正负样本index和label
+train_edge_label_index =load_edge_index_from_txt("dataset/rrtrain_x_n.txt")  #同140，不过还需提供负样本--
+# 根据边的数量生成标签张量
+num_edges = train_edge_label_index.shape[1]  # 总边数（正样本 + 负样本）
+half = num_edges // 2  # 假设正样本和负样本数量相等
+train_edge_label = torch.cat([
+    torch.ones(half, dtype=torch.float32),  # 正样本标签为 1
+    torch.zeros(num_edges - half, dtype=torch.float32)  # 负样本标签为 0
+])
+# train_edge_label =  #一行，正样本为1，负样本为0--
 
-# 加载训练的正负样本边索引并调整药物索引
-train_edge_label_index = load_edge_index_from_txt("dataset/rrtrain_x_n.txt")
-train_edge_label_index[1] += num_RNA  # 调整药物索引
-
-# 加载测试的正负样本边索引并调整药物索引
-test_edge_label_index = load_edge_index_from_txt("dataset/rrtest_x_n.txt")
-test_edge_label_index[1] += num_RNA  # 调整药物索引
-
-# 构建训练标签：假设前一半为正样本，后一半为负样本
-num_edges = train_edge_label_index.shape[1]
-half = num_edges // 2
-train_edge_label = torch.cat([torch.ones(half), torch.zeros(num_edges - half)])
-
-# 构建测试标签
-num_edges_test = test_edge_label_index.shape[1]
-half_test = num_edges_test // 2
-test_edge_label = torch.cat([torch.ones(half_test), torch.zeros(num_edges_test - half_test)])
-
-# 确保数据正确性
-# print("训练边索引调整后：", train_edge_label_index.max(), "应小于总节点数", num_nodes)
-# print("测试边索引调整后：", test_edge_label_index.max(), "应小于总节点数", num_nodes)
+#构建测试集中的正负样本index和label
+test_edge_label_index = load_edge_index_from_txt("dataset/rrtest_x_n.txt")  # 同157，但是测试样本
+num_edges = test_edge_label_index.shape[1]  # 总边数（正样本 + 负样本）
+half = num_edges // 2  # 假设正样本和负样本数量相等
+test_edge_label = torch.cat([
+    torch.ones(half, dtype=torch.float32),  # 正样本标签为 1
+    torch.zeros(num_edges - half, dtype=torch.float32)  # 负样本标签为 0
+])
+# test_edge_label =  #同158，测试样本
 
 # 构建图数据对象
 data_train = Data(x=node_features, edge_index=edge_index_combined_train)
@@ -198,24 +195,6 @@ data_test = Data(x=node_features, edge_index=edge_index_combined_test)
 model = GNNDecoder(in_channels=node_features.shape[1], hidden_channels=128, out_channels=128) # 调整到最优 hidden_channels=128, out_channels=128，需要同步数量 --
 #optimizer = optim.Adam(model.parameters(), lr=0.01)
 optimizer = optim.RMSprop(model.parameters(), lr=learn_rate, alpha=0.99)
-
-# 添加梯度裁剪并调整学习率
-optimizer = optim.RMSprop(model.parameters(), lr=0.0001)  # 降低学习率
-# 在训练循环中添加梯度裁剪
-def train(model, data, optimizer, train_edge_label_index, train_edge_label):
-    model.train()
-    optimizer.zero_grad()
-    out = model(data.x, data.edge_index)
-    out = out[train_edge_label_index[0], train_edge_label_index[1]]
-    loss = nn.BCEWithLogitsLoss()(out, train_edge_label)
-    loss.backward()
-    torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)  # 梯度裁剪
-    optimizer.step()
-    return loss.item()
-
-# ...（其余代码保持不变）
-
-
 
 # 训练模型
 num_epochs = 200 # 调整到最优

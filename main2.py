@@ -112,7 +112,9 @@ for i in range(1):
     adj_dense = adj.to_dense()
     adj_dense1 = test1.to_dense()
 
-    svd_u,s,svd_v = matrix_decomposition(adj_dense1, method='full_svd', q=svd_q)
+    a = torch.load("test_predictions_matrix.pt")
+
+    svd_u,s,svd_v = matrix_decomposition(a, method='full_svd', q=svd_q)
     u_mul_s = svd_u @ (torch.diag(s))
     v_mul_s = svd_v @ (torch.diag(s))
     del s
