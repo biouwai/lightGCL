@@ -31,8 +31,8 @@ class GNNDecoder(nn.Module):
         #self.gcn2 = pyg_nn.LEConv(hidden_channels, out_channels)
         # self.gcn1 = pyg_nn.GeneralConv(in_channels, hidden_channels)
         # self.gcn2 = pyg_nn.GeneralConv(hidden_channels, out_channels)
-        #self.gcn1 = pyg_nn.GraphConv(in_channels, hidden_channels)
-        #self.gcn2 = pyg_nn.GraphConv(hidden_channels, out_channels)
+        # self.gcn1 = pyg_nn.GraphConv(in_channels, hidden_channels)
+        # self.gcn2 = pyg_nn.GraphConv(hidden_channels, out_channels)
         self.reset_parameters()
 
     def reset_parameters(self):
@@ -77,25 +77,49 @@ def train(model, data, optimizer, train_edge_label_index, train_edge_label):
     optimizer.step()
     return loss.item()
 
+# def evaluate(model, data, test_edge_label_index, test_edge_label):
+#     model.eval()
+#     with torch.no_grad():
+#         RNA_emb, drug_emb = model(data.x, data.edge_index)
+#         out = compute_scores(RNA_emb, drug_emb, test_edge_label_index)
+#         print(out,'out')
+#         y_true = test_edge_label.cpu().numpy()
+#         y_scores = torch.sigmoid(out).cpu().numpy()
+
+#                 # 创建全零矩阵，并填充预测得分
+#         pred_matrix = torch.zeros((num_RNA, num_drug))
+#         rows = test_edge_label_index[0].cpu().numpy()
+#         cols = (test_edge_label_index[1] - num_RNA).cpu().numpy()  # 还原药物原始索引
+#         pred_matrix[rows, cols] = torch.tensor(y_scores)  # 填充预测值
+#         print(pred_matrix,'pred_matrix')
+        
+#         # 保存预测矩阵
+#         torch.save(pred_matrix, "saved_train_dataset/train2.pt")
+
+#         if len(y_true) == 0 or len(y_scores) == 0:
+#             raise ValueError("Empty data in evaluation phase!")
+#         auc = roc_auc_score(y_true, y_scores)
+#         aupr = average_precision_score(y_true, y_scores)
+#     return auc, aupr
+
 def evaluate(model, data, test_edge_label_index, test_edge_label):
     model.eval()
     with torch.no_grad():
         RNA_emb, drug_emb = model(data.x, data.edge_index)
+        
+        # === 生成所有RNA-药物对的预测概率 ===
+        # 计算所有可能的分数
+        scores = RNA_emb @ drug_emb.T  # 形状: [num_RNA, num_drug]
+        full_pred_matrix = torch.sigmoid(scores)  # 转换为概率
+        
+        # === 保存完整预测矩阵 ===
+        torch.save(full_pred_matrix, "saved_train_dataset/full1.pt")
+        print("完整预测矩阵已保存")
+
+        # === 原有测试集评估逻辑 ===
         out = compute_scores(RNA_emb, drug_emb, test_edge_label_index)
         y_true = test_edge_label.cpu().numpy()
         y_scores = torch.sigmoid(out).cpu().numpy()
-
-                # 创建全零矩阵，并填充预测得分
-        pred_matrix = torch.zeros((num_RNA, num_drug))
-        rows = test_edge_label_index[0].cpu().numpy()
-        cols = (test_edge_label_index[1] - num_RNA).cpu().numpy()  # 还原药物原始索引
-        pred_matrix[rows, cols] = torch.tensor(y_scores)  # 填充预测值
-        
-        # 保存预测矩阵
-        torch.save(pred_matrix, "test_predictions_matrix.pt")
-        
-        if len(y_true) == 0 or len(y_scores) == 0:
-            raise ValueError("Empty data in evaluation phase!")
         auc = roc_auc_score(y_true, y_scores)
         aupr = average_precision_score(y_true, y_scores)
     return auc, aupr
@@ -143,9 +167,9 @@ def load_edge_label_from_txt(filename):
     return edge_index, labels
 
 # 加载边索引（正样本）
-edge_index_train = load_edge_index_from_txt("dataset/rrtrain_x.txt")  # 三列文件，但只取前两列
+edge_index_train = load_edge_index_from_txt("dataset/rrtest_x copy.txt")  # 三列文件，但只取前两列
 edge_index_train[1] += num_RNA  # 调整药物索引
-edge_index_test = load_edge_index_from_txt("dataset/rrtest_x.txt")    # 测试集边索引
+edge_index_test = load_edge_index_from_txt("dataset/rrtest_x copy.txt")    # 测试集边索引
 edge_index_test[1] += num_RNA
 
 # 生成反向边（无向图）

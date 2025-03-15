@@ -1,61 +1,83 @@
-from datetime import date
+
 import logging
 import numpy as np
-from sklearn.model_selection import ParameterGrid
 import torch
-import scipy.sparse as sp
 from model import LightGCL
-from utils import metrics, scipy_sparse_mat_to_torch_sparse_tensor
-from parser import args
+from utils import metrics, scipy_sparse_mat_to_torch_sparse_tensor,matrix_decomposition
 import torch.utils.data as data
 from utils import TrnData
 import warnings
+import numpy as np
+from scipy.sparse import coo_matrix
 
 warnings.filterwarnings("ignore")
 
-device = 'cuda:' + args.cuda
+device = 'cpu'
 
-logging.basicConfig(filename='output.log', level=logging.INFO, format='%(asctime)s - %(message)s')
-# ds = [32, 64, 128, 256, 512]
-# layers = [1, 2, 3, 4, 5]
-# svd_q_values = [1, 3, 5, 10, 15, 20]
-# dropout_values = [0.0, 0.1, 0.2, 0.25, 0.3, 0.5]
-# temp_values = [0.3, 0.5, 1, 3, 10]
-def train_model(n, d, l, temp, batch_user, epoch_no, lambda_1, lambda_2, dropout, lr, svd_q):
-    # 第n个参数组合
-    print('组合',n,'开始训练---')
-    # 数据加载
-    def read_file_to_sparse_matrix(file_path):
+max_auc_list = []
+max_aucr_list = []
+for i in range(1):
+    # 实验参数
+    batch_user=256
+    d=64
+    dropout=0.2
+    epoch_no=120
+    l=2
+    lambda_2=0.00001
+    lambda_1=0.005
+    lr=0.001
+    svd_q=64
+    temp=0.1
+    # 指标
+    max_auc = 0
+    max_aucr = 0
+    max_epoch = 0
+
+
+    def load_sparse(filename):
+        """
+        从文件加载稀疏矩阵。
+        
+        参数:
+            filename (str): 文件路径。
+        
+        返回:
+            scipy.sparse.coo_matrix: 还原的稀疏矩阵。
+        """
         rows = []
         cols = []
         data = []
-        with open(file_path, 'r') as file:
-            for line in file:
-                parts = line.strip().split()
-                if len(parts) == 3:
-                    row, col, value = map(int, parts)
-                    rows.append(row)
-                    cols.append(col)
-                    data.append(value)
-        n_rows = max(rows) + 1
-        n_cols = max(cols) + 1
-        # 创建 COO 稀疏矩阵
-        coo_matrix = sp.coo_matrix((data, (rows, cols)), shape=(n_rows, n_cols), dtype=np.float32)
-        # 转换为 CSR 稀疏矩阵
-        csr_matrix = coo_matrix.tocsr()
-        return coo_matrix, csr_matrix
+        n_rows = 0
+        n_cols = 0
+        
+        with open(filename, 'r') as f:
+            for line in f:
+                if line.startswith("# Shape:"):
+                    # 解析矩阵形状
+                    parts = line.strip().split()
+                    n_rows = int(parts[2])
+                    n_cols = int(parts[3])
+                else:
+                    # 解析非零元素
+                    parts = line.strip().split()
+                    if len(parts) == 3:
+                        row, col, value = map(int, parts)
+                        rows.append(row)
+                        cols.append(col)
+                        data.append(value)
+        
+        # 创建稀疏矩阵
+        sparse_matrix = coo_matrix((data, (rows, cols)), shape=(n_rows, n_cols), dtype=np.float32)
+        return sparse_matrix
 
-    train_path = 'dataset/rtrain_0.txt'
-    train, train_csr = read_file_to_sparse_matrix(train_path)
-    test_path = 'dataset/rtest_0.txt'
-    test, test_csr = read_file_to_sparse_matrix(test_path)
+    # 示例：加载 train 和 test
+    train = load_sparse('dataset/rtrain_0.txt')
+    train_csr = train.tocsr()
+    test = load_sparse('dataset/rtest_0.txt')
 
-    # print('Data loaded.')
-
-    # print('user_num:',train.shape[0],'item_num:',train.shape[1],'lambda_1:',lambda_1,'lambda_2:',lambda_2,'temp:',temp,'q:',svd_q)
-
-    # epoch_user = min(train.shape[0], 30000)
-
+    train1 = train.copy()
+    test1 = test.copy()
+    
     # normalizing the adj matrix
     rowD = np.array(train.sum(1)).squeeze()
     colD = np.array(train.sum(0)).squeeze()
@@ -64,21 +86,29 @@ def train_model(n, d, l, temp, batch_user, epoch_no, lambda_1, lambda_2, dropout
 
     # construct data loader
     train = train.tocoo()
+    test = test.tocoo()
     train_data = TrnData(train)
-    train_loader = data.DataLoader(train_data, batch_size=args.inter_batch, shuffle=True, num_workers=0)
+    train_loader = data.DataLoader(train_data, batch_size=4096, shuffle=True, num_workers=0)
 
     adj_norm = scipy_sparse_mat_to_torch_sparse_tensor(train)
-    adj_norm = adj_norm.coalesce().cuda(torch.device(device))
-    # print('Adj matrix normalized.')
+    adj_norm = adj_norm.coalesce()
 
+# 下次使用时可以直接加载
     # perform svd reconstruction
-    adj = scipy_sparse_mat_to_torch_sparse_tensor(train).coalesce().cuda(torch.device(device))
-    # print('Performing SVD...')
-    svd_u,s,svd_v = torch.svd_lowrank(adj, q=svd_q)
+    adj = scipy_sparse_mat_to_torch_sparse_tensor(train1).coalesce()
+    test1 = scipy_sparse_mat_to_torch_sparse_tensor(test1).coalesce()
+    # 4. 转换为密集张量
+    train1 = torch.load('saved_train_dataset/all.pt')# 转换为稀疏格式
+
+    adj_dense = adj.to_dense()
+    adj_dense1 = test1.to_dense()
+
+
+    svd_u,s,svd_v = matrix_decomposition(adj_dense, method='full_svd', q=svd_q)
     u_mul_s = svd_u @ (torch.diag(s))
     v_mul_s = svd_v @ (torch.diag(s))
     del s
-    # print('SVD done.')
+    print('SVD done.')
 
     # process test set
     max_user_id = max(train.shape[0], test.shape[0])
@@ -87,17 +117,14 @@ def train_model(n, d, l, temp, batch_user, epoch_no, lambda_1, lambda_2, dropout
         row = test.row[i]
         col = test.col[i]
         test_labels[row].append(col)
-    # print('Test data processed.')
 
     loss_list = []
     loss_r_list = []
     loss_s_list = []
-    max_auc = 0
-    max_aucr = 0
-    max_epoch = 0
+
 
     model = LightGCL(adj_norm.shape[0], adj_norm.shape[1], d, u_mul_s, v_mul_s, svd_u.T, svd_v.T, train_csr, adj_norm, l, temp, lambda_1, lambda_2, dropout, batch_user, device)
-    model.cuda(torch.device(device))
+
     optimizer = torch.optim.Adam(model.parameters(),weight_decay=0,lr=lr)
     current_lr = lr
 
@@ -105,16 +132,15 @@ def train_model(n, d, l, temp, batch_user, epoch_no, lambda_1, lambda_2, dropout
         # if (epoch+1)%50 == 0:
         #     torch.save(model.state_dict(),'saved_model/saved_model_epoch_'+str(epoch)+'.pt')
         #     torch.save(optimizer.state_dict(),'saved_model/saved_optim_epoch_'+str(epoch)+'.pt')
-
         epoch_loss = 0
         epoch_loss_r = 0
         epoch_loss_s = 0
         train_loader.dataset.neg_sampling()
         for i, batch in enumerate(train_loader):
             uids, pos, neg = batch
-            uids = uids.long().cuda(torch.device(device))
-            pos = pos.long().cuda(torch.device(device))
-            neg = neg.long().cuda(torch.device(device))
+            uids = uids.long()
+            pos = pos.long()
+            neg = neg.long()
             iids = torch.concat([pos, neg], dim=0)
 
             # feed
@@ -125,7 +151,6 @@ def train_model(n, d, l, temp, batch_user, epoch_no, lambda_1, lambda_2, dropout
             epoch_loss += loss.cpu().item()
             epoch_loss_r += loss_r.cpu().item()
             epoch_loss_s += loss_s.cpu().item()
-            torch.cuda.empty_cache()
 
         batch_no = len(train_loader)
         epoch_loss = epoch_loss/batch_no
@@ -135,115 +160,164 @@ def train_model(n, d, l, temp, batch_user, epoch_no, lambda_1, lambda_2, dropout
         loss_r_list.append(epoch_loss_r)
         loss_s_list.append(epoch_loss_s)
 
+
         if epoch % 5 == 0:  # test every 5 epochs
-            test_uids = np.array([i for i in range(adj_norm.shape[0])])
-            batch_no = int(np.ceil(len(test_uids)/batch_user))
-            test_uids_input = torch.LongTensor(test_uids).cuda(torch.device(device))
-            predictions = model(test_uids_input,None,None,None,test=True)
-            auc,aupr = metrics(test_uids,predictions,test_labels)
-            if (auc + aupr) > (max_auc+max_aucr):
-                max_auc = auc
-                max_aucr = aupr
-                max_epoch = epoch
-                # print('epoch:',epoch,'AUC:',auc,'AUPR:',aupr)
+            with torch.no_grad():  # 新增的上下文管理器
+                test_uids = np.array([i for i in range(adj_norm.shape[0])])
+                batch_no = int(np.ceil(len(test_uids)/batch_user))
+                test_uids_input = torch.LongTensor(test_uids)
+                predictions = model(test_uids_input, None, None, None, test=True)
+                auc,aupr = metrics(test_uids,predictions,test_labels)
+                # print('------------------------------------')
+                if (auc + aupr) > (max_auc+max_aucr):
+                    max_auc = auc   
+                    max_aucr = aupr
+                    max_epoch = epoch
+                # print('Epoch:',epoch,'Loss:',epoch_loss,'Loss_r:',epoch_loss_r,'Loss_s:',epoch_loss_s)
+                print('max_auc:',auc,'max_aucr:',aupr,'max_epoch:',epoch)
 
-    return max_epoch, max_auc, max_aucr
+    print('max_auc:',max_auc,'max_aucr:',max_aucr,'max_epoch:',max_epoch)
+    max_auc_list.append(max_auc)
+    max_aucr_list.append(max_aucr)
+    avg_auc = np.mean(max_auc_list)
+    avg_aucr = np.mean(max_aucr_list)
+    print('loss',loss_list[4],'loss_r',loss_r_list[4],loss_s_list[4])
+print('mode: nosvd','max_auc_list',max_auc_list,'max_aucr_list:',max_aucr_list,'avg_auc:',avg_auc,'avg_aucr:',avg_aucr)
+logging.info('mode: avg_auc: %s, avg_aucr: %s', avg_auc, avg_aucr)
+    
+# ------------------------------------------------------------------
+# 只取对应正样本
+# 获取测试集正样本坐标
+# test_pos_coo = test.tocoo()
+# test_pos_users = test_pos_coo.row.astype(np.int32)
+# test_pos_items = test_pos_coo.col.astype(np.int32)
 
-            # print('------------------------------------')
-            # print('Epoch:',epoch,'Loss:',epoch_loss,'Loss_r:',epoch_loss_r,'Loss_s:',epoch_loss_s)
+# # 分批预测测试正样本的概率
+# batch_size = 2048  # 根据内存调整批大小
+# predictions = []
+# with torch.no_grad():
+#     for i in range(0, len(test_pos_users), batch_size):
+#         batch_users = torch.LongTensor(test_pos_users[i:i+batch_size])
+#         batch_items = torch.LongTensor(test_pos_items[i:i+batch_size])
+#         # 使用模型预测对应位置的分数
+#         batch_pred = model.get_pair_predictions(batch_users, batch_items)
+#         predictions.append(batch_pred)
 
-# 定义超参数网格
-param_grid = {
-    'd': [32, 64, 128, 256],  # 嵌入维度
-    'l': [2, 3, 4, 5],  # GNN 层数
-    'temp': [1, 3, 5, 7, 9],  # 温度参数
-    'batch_user': [128, 256, 512],  # 用户批次大小
-    'epoch_no': [700],  # 训练轮数
-    'lambda_1': [0.0001, 0.001, 0.01, 0.1],  # 正则化参数
-    'lambda_2': [1e-5, 1e-4, 1e-3, 1e-2],  # 正则化参数
-    'dropout': [0.0, 0.1, 0.2, 0.3, 0.4],  # Dropout 概率
-    'lr': [0.0001],  # 学习率
-    'svd_q': [3, 5, 7, 9]  # SVD 分解的秩
-}
+# # 拼接预测结果
+# predictions = torch.cat(predictions)
 
+# # 验证预测结果的形状
+# assert predictions.shape == torch.Size([len(test_pos_users)]), \
+#     f"预测形状应为{[len(test_pos_users)]}，实际为{predictions.shape}"
 
-best_auc = 0
-best_aupr = 0
-best_params = None
-n = 0
+# # 创建更新后的矩阵
+# updated_adj_dense = adj_dense.clone()
 
+# # 仅更新测试正样本位置的概率
+# updated_adj_dense[test_pos_users, test_pos_items] = predictions
 
-for params in ParameterGrid(param_grid):
-    #超参数
-    # d = 64  # 嵌入维度
-    # l = 3  # GNN 层数
-    # temp = 5  # 温度参数
-    # batch_user = 256  # 用户批次大小
-    # epoch_no = 200  # 训练轮数
-    # max_samp = 50  # 最大采样数
-    # lambda_1 = 0.001  # 正则化参数
-    # lambda_2 = 1e-4  # 正则化参数
-    # dropout = 0.1  # Dropout 概率
-    # lr = 0.001  # 学习率
-    # decay = 1e-5  # 权重衰减系数
-    # svd_q = 5  # SVD 分解的秩
-    d = params['d']
-    l = params['l']
-    temp = params['temp']
-    batch_user = params['batch_user']
-    epoch_no = params['epoch_no']
-    lambda_1 = params['lambda_1']
-    lambda_2 = params['lambda_2']
-    dropout = params['dropout']
-    lr = params['lr']
-    svd_q = params['svd_q']
+# # 保存更新后的矩阵
+# torch.save(updated_adj_dense, 'saved_train_dataset/only-positive.pt')
 
-    n = n + 1
-    from datetime import datetime
+# # 输出更新信息
+# print(f"\n更新完成:")
+# print(f"- 更新位置总数: {len(test_pos_users)}")
+# print(f"- 测试正样本位置已更新为模型预测概率")
+# print(f"- 保存文件格式: {updated_adj_dense.shape} {updated_adj_dense.dtype}")
 
-    # 获取当前时间
-    now = datetime.now()
+# ...（前面的训练代码保持不变）------------------------------------------------------------------------------------
+# 以下为全部
 
-    print('date',now,'n',n,'params',params)
-    epoch_no, auc, aupr = train_model(n, d, l, temp, batch_user, epoch_no, lambda_1, lambda_2, dropout, lr, svd_q)
+# 在训练结束后添加以下代码
+# 生成所有用户的预测得分
+# test_uids = np.arange(adj_norm.shape[0])
+# test_uids_input = torch.LongTensor(test_uids)
+# predictions = model(test_uids_input, None, None, None, test=True).detach()
 
-    # 同时考虑 AUC 和 AUPR 来更新最佳参数
-    if (auc + aupr) > (best_auc + best_aupr):
-        best_auc = auc
-        best_aupr = aupr
-        best_params = params
-        print('epoch:',epoch_no,'AUC:',best_auc,'AUPR:',best_aupr,'params:',best_params)
-        logging.info('n: %d epoch: %s AUC: %s AUPR: %s params: %s', n, epoch_no, best_auc, best_aupr, best_params)
+# # 创建原始训练矩阵的副本
+# updated_adj_dense = adj_dense.clone()
 
-print("Best epoch:", epoch_no)
-print("Best AUC:", best_auc)
-print("Best AUPR:", best_aupr)
-print("Best parameters:", best_params)
+# # 创建布尔掩码（原始正样本位置为False）
+# positive_mask = (adj_dense != 0)
+# negative_mask = ~positive_mask
 
+# # 仅替换负样本位置的预测值（保持正样本不变）
+# updated_adj_dense[negative_mask] = predictions[negative_mask]
 
-#     results.append({
-#         'temp': temp,
-#         'max_epoch':max_epoch,
-#         'max_auc': max_auc,
-#         'max_aucr': max_aucr
-#     })
+# # 保存更新后的矩阵
+# torch.save(updated_adj_dense, 'saved_train/all.pt')
+# print("训练集已更新并保存为 all.pt")
 
-# # 输出结果
-# for result in results:
-#     print(result)
+# # 验证保存的格式
+# loaded_adj = torch.load('saved_train/all.pt')
+# print("验证保存格式:", 
+#       "形状一致" if loaded_adj.shape == adj_dense.shape else "形状不一致",
+#       "类型一致" if loaded_adj.dtype == adj_dense.dtype else "类型不一致")
 
-# # 提取数据
-# auc_scores = [result['max_auc'] for result in results]
-# aupr_scores = [result['max_aucr'] for result in results]
-# # 提取数据
-# temp_values = [result['temp'] for result in results]
+# ================== 训练结束后添加以下代码 ==================
+# 获取测试集正样本坐标
+# test_pos_coo = test.tocoo()
+# test_pos_users = test_pos_coo.row.astype(np.int32)
+# test_pos_items = test_pos_coo.col.astype(np.int32)
 
-# # 绘制图表
-# plt.plot(temp_values, auc_scores, marker='o', label='AUC')
-# plt.plot(temp_values, aupr_scores, marker='x', label='AUPR')
-# plt.xscale('log')  # 使用对数坐标轴
-# plt.xlabel('Temperature (τ)')
-# plt.ylabel('Performance')
-# plt.title('Effect of Temperature on Model Performance')
-# plt.legend()
-# plt.show()
+# # 生成随机负样本坐标（与测试正样本数量相同）
+# num_replace = len(test_pos_users)
+# np.random.seed(2048)  # 保持可复现性
+
+# # 创建候选负样本池（排除所有已知正样本）
+# all_pos_set = set(zip(train.row, train.col)) | set(zip(test_pos_users, test_pos_items))
+# valid_negs = []
+# max_retry = 5
+
+# # 高效采样逻辑
+# for _ in range(max_retry):
+#     # 生成候选样本
+#     candidate_users = np.random.randint(0, train.shape[0], size=num_replace*10)
+#     candidate_items = np.random.randint(0, train.shape[1], size=num_replace*10)
+    
+#     # 过滤有效负样本
+#     for u, i in zip(candidate_users, candidate_items):
+#         if (u, i) not in all_pos_set and adj_dense[u, i] == 0:
+#             valid_negs.append((u, i))
+#         if len(valid_negs) >= num_replace:
+#             break
+#     if len(valid_negs) >= num_replace:
+#         break
+
+# random_users, random_items = zip(*valid_negs[:num_replace])
+# random_users = np.array(random_users)
+# random_items = np.array(random_items)
+
+# # 合并更新坐标
+# update_users = np.concatenate([test_pos_users, random_users])
+# update_items = np.concatenate([test_pos_items, random_items])
+
+# # 分批预测防止内存溢出
+# batch_size = 2048
+# predictions = []
+# with torch.no_grad():
+#     for i in range(0, len(update_users), batch_size):
+#         batch_users = torch.LongTensor(update_users[i:i+batch_size])
+#         batch_items = torch.LongTensor(update_items[i:i+batch_size])
+#         batch_pred = model.get_pair_predictions(batch_users, batch_items)
+#         predictions.append(batch_pred)
+
+# # 拼接预测结果并验证形状
+# predictions = torch.cat(predictions)
+# assert predictions.shape == torch.Size([len(update_users)]), \
+#     f"预测形状应为{[len(update_users)]}，实际为{predictions.shape}"
+
+# # 更新矩阵
+# updated_adj_dense = adj_dense.clone()
+# updated_adj_dense[update_users, update_items] = predictions
+
+# # 保存更新后的矩阵
+# torch.save(updated_adj_dense, 'saved_train_dataset/half.pt')
+
+# # 验证输出
+# print(f"\n更新完成:")
+# print(f"- 更新位置总数: {len(update_users)}")
+# print(f"- 测试正样本更新: {len(test_pos_users)}")
+# print(f"- 随机负样本更新: {len(random_users)}")
+# print(f"- 新矩阵非零值: {(updated_adj_dense > 0).sum().item()}")
+# print(f"- 保存文件格式: {updated_adj_dense.shape} {updated_adj_dense.dtype}")
