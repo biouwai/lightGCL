@@ -3,16 +3,17 @@ import scipy.sparse as sp
 import torch
 import torch.nn as nn
 import torch.utils.data as data
+from scipy.sparse import coo_matrix
 from sklearn.metrics import roc_auc_score, precision_recall_curve, auc
 
 def metrics(uids, predictions, test_labels):
     # 步骤 1: 将 numpy.int32 转换为 int
     test_labels = [[int(item) for item in sublist] for sublist in test_labels]
+    # 获取物品数量（预测矩阵的列数）
     num_items = predictions.shape[1]
-    # 修改：使用 detach().numpy() 从计算图中分离并转换为 numpy 数组
-    # flat_predictions = predictions.flatten().detach().numpy()
-    # 将 GPU 张量复制到 CPU 上
+    # 将预测值从 GPU 张量复制到 CPU，并转换为 NumPy 数组
     flat_predictions = predictions.flatten().detach().cpu().numpy()
+    # 初始化标签数组，所有值默认为 0（负样本）
     flat_labels = np.zeros(len(flat_predictions))
 
     # 明确将 test_labels 中的元素与 uids 对应
@@ -25,7 +26,6 @@ def metrics(uids, predictions, test_labels):
 
     # 计算正样本的数量
     num_positive = int(np.sum(flat_labels))
-
     # 找出正样本的索引
     positive_indices = np.where(flat_labels == 1)[0]
     # 找出负样本的索引
@@ -55,6 +55,7 @@ def metrics(uids, predictions, test_labels):
 
     return auc_score, aupr_score
 
+# 将 SciPy 稀疏矩阵转换为 PyTorch 稀疏张量
 def scipy_sparse_mat_to_torch_sparse_tensor(sparse_mx):
     sparse_mx = sparse_mx.tocoo().astype(np.float32)
     indices = torch.from_numpy(
@@ -63,6 +64,7 @@ def scipy_sparse_mat_to_torch_sparse_tensor(sparse_mx):
     shape = torch.Size(sparse_mx.shape)
     return torch.sparse.FloatTensor(indices, values, shape)
 
+# 如果 dropout 概率为 0，则直接返回原矩阵。否则，随机丢弃稀疏矩阵中的非零值。
 def sparse_dropout(mat, dropout):
     if dropout == 0.0:
         return mat
@@ -71,15 +73,6 @@ def sparse_dropout(mat, dropout):
     size = mat.size()
     return torch.sparse.FloatTensor(indices, values, size)
 
-def spmm(sp, emb, device):
-    sp = sp.coalesce()
-    cols = sp.indices()[1]
-    rows = sp.indices()[0]
-    col_segs =  emb[cols] * torch.unsqueeze(sp.values(),dim=1)
-    result = torch.zeros((sp.shape[0],emb.shape[1])).cuda(torch.device(device))
-    result.index_add_(0, rows, col_segs)
-    return result
-
 class TrnData(data.Dataset):
     def __init__(self, coomat):
         self.rows = coomat.row
@@ -87,6 +80,7 @@ class TrnData(data.Dataset):
         self.dokmat = coomat.todok()
         self.negs = np.zeros(len(self.rows)).astype(np.int32)
 
+    # 为每个正样本生成一个负样本。
     def neg_sampling(self):
         for i in range(len(self.rows)):
             u = self.rows[i]
@@ -99,8 +93,89 @@ class TrnData(data.Dataset):
     def __len__(self):
         return len(self.rows)
 
+    # 根据索引 idx，返回对应的用户 ID、正样本物品 ID 和负样本物品 ID
     def __getitem__(self, idx):
         return self.rows[idx], self.cols[idx], self.negs[idx]
+
+# 解析文件内容，提取用户 ID、物品 ID 和交互值。构造 COO 格式的稀疏矩阵
+def load_sparse(filename):
+
+    rows = []
+    cols = []
+    data = []
+    n_rows = 0
+    n_cols = 0
+    
+    with open(filename, 'r') as f:
+        for line in f:
+            if line.startswith("# Shape:"):
+                # 解析矩阵形状
+                parts = line.strip().split()
+                n_rows = int(parts[2])
+                n_cols = int(parts[3])
+            else:
+                # 解析非零元素
+                parts = line.strip().split()
+                if len(parts) == 3:
+                    row, col, value = map(int, parts)
+                    rows.append(row)
+                    cols.append(col)
+                    data.append(value)
+    
+    # 创建稀疏矩阵
+    sparse_matrix = coo_matrix((data, (rows, cols)), shape=(n_rows, n_cols), dtype=np.float32)
+    return sparse_matrix
+
+# 解析文件内容，提取用户 ID、物品 ID 和交互值。构造 COO 格式的稀疏矩阵，并转换为 CSR 格式以提高计算效率。
+def read_file_to_sparse_matrix(file_path):
+    rows = []
+    cols = []
+    data = []
+    with open(file_path, 'r') as file:
+        for line in file:
+            parts = line.strip().split()
+            if len(parts) == 3:
+                row, col, value = map(int, parts)
+                rows.append(row)
+                cols.append(col)
+                data.append(value)
+    n_rows = max(rows) + 1
+    n_cols = max(cols) + 1
+    # 创建 COO 稀疏矩阵
+    coo_matrix = sp.coo_matrix((data, (rows, cols)), shape=(n_rows, n_cols), dtype=np.float32)
+    # 转换为 CSR 稀疏矩阵
+    csr_matrix = coo_matrix.tocsr()
+    return coo_matrix, csr_matrix
+
+# 对输入矩阵进行分解，支持多种分解方法（如 SVD、PCA、QR、NMF 等）
+def matrix_decomposition(adj, method='full_svd', q=None):
+    if method == 'full_svd':
+        U, S, Vh = torch.linalg.svd(adj)
+        return U[:, :q], S[:q], Vh[:q, :].T  # Return V instead of V^T
+    elif method == 'lowrank':
+        U, S, V = torch.svd_lowrank(adj, q=q)
+        return U, S, V  # No need to transpose
+    elif method == 'pca':
+        # PCA decomposition
+        U, S, V = torch.pca_lowrank(adj.to_dense(), q=q)
+        return U, S, V  # Transpose V to match expected shape (n x q)
+    elif method == 'qr':
+        Q, R = torch.linalg.qr(adj.to_dense())
+        # Extract the first q columns of Q and R
+        U_qr = Q[:, :q]  # Shape: (m, q)
+        S_qr = torch.diag(R[:q, :q])  # Singular values (diagonal of R)
+        V_qr = R[:q, :].T  # Transpose R to match expected shape (n, q)
+        return U_qr, S_qr, V_qr
+    elif method == 'nmf':
+        from sklearn.decomposition import NMF
+        # Convert sparse tensor to dense tensor first
+        adj_dense = adj.to_dense().numpy()
+        model = NMF(n_components=q)
+        W = model.fit_transform(adj_dense)  # Fit NMF on dense matrix
+        H = model.components_
+        return torch.Tensor(W), None, torch.Tensor(H.T)  # Return H^T as V
+    else:
+        raise ValueError(f"Unsupported decomposition method: {method}")
     
 # class TrnData(data.Dataset):
 #     def __init__(self, coomat, drug_sim=None):
@@ -139,52 +214,11 @@ class TrnData(data.Dataset):
 #     def __getitem__(self, idx):
 #         return self.rows[idx], self.cols[idx], self.negs[idx]  # 返回5个负样本
     
-# 数据加载
-def read_file_to_sparse_matrix(file_path):
-    rows = []
-    cols = []
-    data = []
-    with open(file_path, 'r') as file:
-        for line in file:
-            parts = line.strip().split()
-            if len(parts) == 3:
-                row, col, value = map(int, parts)
-                rows.append(row)
-                cols.append(col)
-                data.append(value)
-    n_rows = max(rows) + 1
-    n_cols = max(cols) + 1
-    # 创建 COO 稀疏矩阵
-    coo_matrix = sp.coo_matrix((data, (rows, cols)), shape=(n_rows, n_cols), dtype=np.float32)
-    # 转换为 CSR 稀疏矩阵
-    csr_matrix = coo_matrix.tocsr()
-    return coo_matrix, csr_matrix
-    
-def matrix_decomposition(adj, method='full_svd', q=None):
-    if method == 'full_svd':
-        U, S, Vh = torch.linalg.svd(adj)
-        return U[:, :q], S[:q], Vh[:q, :].T  # Return V instead of V^T
-    elif method == 'lowrank':
-        U, S, V = torch.svd_lowrank(adj, q=q)
-        return U, S, V  # No need to transpose
-    elif method == 'pca':
-        # PCA decomposition
-        U, S, V = torch.pca_lowrank(adj.to_dense(), q=q)
-        return U, S, V  # Transpose V to match expected shape (n x q)
-    elif method == 'qr':
-        Q, R = torch.linalg.qr(adj.to_dense())
-        # Extract the first q columns of Q and R
-        U_qr = Q[:, :q]  # Shape: (m, q)
-        S_qr = torch.diag(R[:q, :q])  # Singular values (diagonal of R)
-        V_qr = R[:q, :].T  # Transpose R to match expected shape (n, q)
-        return U_qr, S_qr, V_qr
-    elif method == 'nmf':
-        from sklearn.decomposition import NMF
-        # Convert sparse tensor to dense tensor first
-        adj_dense = adj.to_dense().numpy()
-        model = NMF(n_components=q)
-        W = model.fit_transform(adj_dense)  # Fit NMF on dense matrix
-        H = model.components_
-        return torch.Tensor(W), None, torch.Tensor(H.T)  # Return H^T as V
-    else:
-        raise ValueError(f"Unsupported decomposition method: {method}")
+# def spmm(sp, emb, device):
+#     sp = sp.coalesce()
+#     cols = sp.indices()[1]
+#     rows = sp.indices()[0]
+#     col_segs =  emb[cols] * torch.unsqueeze(sp.values(),dim=1)
+#     result = torch.zeros((sp.shape[0],emb.shape[1])).cuda(torch.device(device))
+#     result.index_add_(0, rows, col_segs)
+#     return result
